@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pano2VR Tile Stitcher</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f5f5f3; --surface: #ffffff; --surface2: #f0efed;
+    --border: rgba(0,0,0,0.12); --border2: rgba(0,0,0,0.22);
+    --text: #1a1a18; --text2: #6b6b68; --text3: #9a9a96;
+    --blue: #185fa5; --blue-bg: #e6f1fb; --blue-text: #185fa5;
+    --green-bg: #eaf3de; --green-text: #3b6d11;
+    --amber-bg: #faeeda; --amber-text: #854f0b;
+    --red-bg: #fcebeb; --red-text: #a32d2d;
+    --radius: 8px; --radius-lg: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1a; --surface: #252523; --surface2: #2e2e2b;
+      --border: rgba(255,255,255,0.10); --border2: rgba(255,255,255,0.20);
+      --text: #f0efe9; --text2: #a8a8a3; --text3: #6b6b67;
+      --blue-bg: #0c3460; --blue-text: #85b7eb;
+      --green-bg: #1a3308; --green-text: #c0dd97;
+      --amber-bg: #3d2800; --amber-text: #fac775;
+      --red-bg: #3d1010; --red-text: #f09595;
+    }
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 2rem 1rem; line-height: 1.6; }
+  .container { max-width: 760px; margin: 0 auto; }
+  header { margin-bottom: 2rem; }
+  header h1 { font-size: 22px; font-weight: 500; margin-bottom: 4px; }
+  header p { font-size: 14px; color: var(--text2); }
+  .drop-zone { border: 1.5px dashed var(--border2); border-radius: var(--radius-lg); background: var(--surface); padding: 3rem 2rem; text-align: center; cursor: pointer; transition: background 0.15s, border-color 0.15s; user-select: none; }
+  .drop-zone:hover, .drop-zone.drag-over { background: var(--surface2); border-color: var(--blue); }
+  .drop-zone .icon { font-size: 40px; margin-bottom: 12px; }
+  .drop-zone strong { font-size: 16px; font-weight: 500; display: block; margin-bottom: 6px; }
+  .drop-zone p { font-size: 13px; color: var(--text2); margin-bottom: 4px; }
+  .drop-zone .hint { font-size: 12px; color: var(--text3); margin-top: 8px; font-family: monospace; }
+  #file-input { display: none; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: 1px solid var(--border2); border-radius: var(--radius); padding: 8px 16px; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--text); transition: background 0.12s; }
+  .btn:hover { background: var(--surface2); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn.primary { border-color: var(--blue); color: var(--blue-text); }
+  .btn.primary:hover { background: var(--blue-bg); }
+  #results { margin-top: 1.5rem; display: none; }
+  .section-label { font-size: 12px; font-weight: 500; color: var(--text2); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+  .node-card { background: var(--surface); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 8px; }
+  .node-header { display: flex; align-items: center; gap: 12px; }
+  .node-icon { font-size: 22px; flex-shrink: 0; }
+  .node-info { flex: 1; min-width: 0; }
+  .node-name { font-size: 14px; font-weight: 500; }
+  .node-meta { font-size: 12px; color: var(--text2); margin-top: 2px; }
+  .node-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+  .badge { font-size: 11px; padding: 3px 10px; border-radius: 99px; white-space: nowrap; font-weight: 500; background: var(--blue-bg); color: var(--blue-text); }
+  .badge.done { background: var(--green-bg); color: var(--green-text); }
+  .badge.working { background: var(--amber-bg); color: var(--amber-text); }
+  .badge.error { background: var(--red-bg); color: var(--red-text); }
+  .face-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; margin-top: 10px; }
+  .face-cell { background: var(--surface2); border-radius: 4px; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; color: var(--text3); border: 0.5px solid var(--border); }
+  .face-cell.found { background: var(--green-bg); color: var(--green-text); border-color: transparent; }
+  .face-cell.missing { background: var(--red-bg); color: var(--red-text); border-color: transparent; }
+  .progress-wrap { background: var(--surface2); border-radius: 99px; height: 3px; margin-top: 10px; overflow: hidden; display: none; }
+  .progress-bar { height: 3px; background: var(--blue); border-radius: 99px; transition: width 0.15s; width: 0%; }
+  .status-msg { font-size: 12px; color: var(--text2); margin-top: 6px; display: none; }
+  .actions-row { margin-top: 1.25rem; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .actions-row span { font-size: 12px; color: var(--text2); }
+  .log-box { margin-top: 1.25rem; background: var(--surface); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 12px 14px; font-family: monospace; font-size: 12px; color: var(--text2); max-height: 180px; overflow-y: auto; display: none; line-height: 1.7; }
+  footer { margin-top: 3rem; font-size: 12px; color: var(--text3); text-align: center; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Pano2VR Tile Stitcher</h1>
+    <p>Upload a Pano2VR published folder — reconstructs full equirectangular panoramas from cube-face tiles at maximum resolution.</p>
+  </header>
+
+  <div class="drop-zone" id="drop-zone">
+    <div class="icon">🗂️</div>
+    <strong>Drop your Pano2VR published folder here</strong>
+    <p>Or click to browse — select the entire output folder including the tiles/ subfolder</p>
+    <button class="btn" style="margin-top:14px" onclick="document.getElementById('file-input').click(); event.stopPropagation();">
+      Choose folder
+    </button>
+    <p class="hint">tiles/{node}/cf_0…5/l_{n}/c_{col}/tile_{row}.jpg</p>
+  </div>
+  <input type="file" id="file-input" multiple webkitdirectory />
+
+  <div id="results">
+    <div class="section-label" id="result-label"></div>
+    <div id="node-list"></div>
+    <div class="actions-row">
+      <button class="btn primary" id="stitch-all-btn">Stitch all panoramas</button>
+      <span>Saves one equirectangular JPEG per panorama node</span>
+    </div>
+  </div>
+
+  <div class="log-box" id="log-box"></div>
+</div>
+
+<script>
+// ─── Constants ────────────────────────────────────────────────────────────────
+// Pano2VR tile step = leveltilesize - overlap = 1022 - 1 = 1021
+const TILE_STEP = 1021;
+const FACE_LABELS = ['F','R','B','L','U','D']; // cf_0..5
+
+// ─── State ───────────────────────────────────────────────────────────────────
+let nodes = {};
+
+// ─── DOM ─────────────────────────────────────────────────────────────────────
+const dropZone    = document.getElementById('drop-zone');
+const fileInput   = document.getElementById('file-input');
+const resultsDiv  = document.getElementById('results');
+const nodeListEl  = document.getElementById('node-list');
+const resultLabel = document.getElementById('result-label');
+const logBox      = document.getElementById('log-box');
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag-over'); handleFiles(e.dataTransfer.files); });
+dropZone.addEventListener('click', e => { if (e.target.tagName !== 'BUTTON') fileInput.click(); });
+fileInput.addEventListener('change', e => handleFiles(e.target.files));
+document.getElementById('stitch-all-btn').addEventListener('click', stitchAll);
+
+function log(msg) {
+  logBox.style.display = 'block';
+  const d = document.createElement('div');
+  d.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+  logBox.appendChild(d);
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+// ─── File scanning ────────────────────────────────────────────────────────────
+// Pattern: tiles/{node}/cf_{0-5}/l_{level}/c_{col}/tile_{row}.{ext}
+const TILE_RE = /tiles\/([^\/]+)\/cf_(\d+)\/l_(\d+)\/c_(\d+)\/tile_(\d+)\.(jpg|jpeg|png)$/i;
+
+function handleFiles(fileList) {
+  nodes = {};
+  const files = Array.from(fileList);
+  log('Scanning ' + files.length + ' files...');
+
+  for (const file of files) {
+    const path = (file.webkitRelativePath || file.name).replace(/\\/g, '/');
+    const m = path.match(TILE_RE);
+    if (!m) continue;
+    const [, nodeName, cf, level, col, row] = m;
+    const cfN = parseInt(cf), levelN = parseInt(level), colN = parseInt(col), rowN = parseInt(row);
+    if (cfN > 5) continue; // skip cf_6+ (preview strips)
+
+    if (!nodes[nodeName]) nodes[nodeName] = { faces: {}, maxLevel: 0, status: 'ready' };
+    if (levelN > nodes[nodeName].maxLevel) nodes[nodeName].maxLevel = levelN;
+    if (!nodes[nodeName].faces[levelN]) nodes[nodeName].faces[levelN] = {};
+    if (!nodes[nodeName].faces[levelN][cfN]) nodes[nodeName].faces[levelN][cfN] = [];
+    nodes[nodeName].faces[levelN][cfN].push({ col: colN, row: rowN, file });
+  }
+
+  const names = Object.keys(nodes);
+  if (!names.length) {
+    log('ERROR: No Pano2VR cube tiles found. Select the entire published folder including tiles/.');
+    return;
+  }
+  for (const name of names) {
+    const n = nodes[name];
+    const fd = n.faces[n.maxLevel] || {};
+    const total = Object.values(fd).reduce((s, a) => s + a.length, 0);
+    log('Node "' + name + '": ' + Object.keys(fd).length + '/6 faces · ' + total + ' tiles · max level ' + n.maxLevel);
+  }
+  renderNodes();
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────────
+function renderNodes() {
+  const names = Object.keys(nodes);
+  resultLabel.textContent = names.length + ' panorama node' + (names.length !== 1 ? 's' : '') + ' detected';
+  nodeListEl.innerHTML = '';
+  for (const name of names) {
+    const n = nodes[name];
+    const fd = n.faces[n.maxLevel] || {};
+    const totalTiles = Object.values(fd).reduce((s, a) => s + a.length, 0);
+    const faceCells = FACE_LABELS.map((lbl, i) =>
+      '<div class="face-cell ' + (fd[i] ? 'found' : 'missing') + '">' + lbl + '</div>'
+    ).join('');
+    const card = document.createElement('div');
+    card.className = 'node-card';
+    card.innerHTML = `
+      <div class="node-header">
+        <div class="node-icon">🌐</div>
+        <div class="node-info">
+          <div class="node-name">${name}</div>
+          <div class="node-meta">${Object.keys(fd).length}/6 faces · ${totalTiles} tiles · level ${n.maxLevel}</div>
+        </div>
+        <div class="node-actions">
+          <span class="badge" id="badge-${name}">ready</span>
+          <button class="btn" id="btn-${name}">Stitch</button>
+        </div>
+      </div>
+      <div class="face-grid">${faceCells}</div>
+      <div class="progress-wrap" id="pw-${name}"><div class="progress-bar" id="pb-${name}"></div></div>
+      <div class="status-msg" id="sm-${name}"></div>
+    `;
+    card.querySelector('#btn-' + name).addEventListener('click', () => stitchNode(name));
+    nodeListEl.appendChild(card);
+  }
+  resultsDiv.style.display = 'block';
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function setProgress(name, pct, msg) {
+  document.getElementById('pw-' + name).style.display = 'block';
+  document.getElementById('pb-' + name).style.width = pct + '%';
+  const sm = document.getElementById('sm-' + name);
+  if (msg) { sm.style.display = 'block'; sm.textContent = msg; }
+}
+function setBadge(name, text, cls) {
+  const b = document.getElementById('badge-' + name);
+  b.textContent = text; b.className = 'badge ' + (cls || '');
+}
+function loadImage(file) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload  = () => { URL.revokeObjectURL(url); res(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('Failed: ' + file.name)); };
+    img.src = url;
+  });
+}
+
+// ─── Stitch one cube face from its tiles ─────────────────────────────────────
+// Face size is computed correctly as: maxCol*TILE_STEP + lastColWidth
+// This gives exactly the XML-specified size (e.g. 3000) with no extra pixels.
+async function stitchFace(tiles) {
+  const maxCol = Math.max(...tiles.map(t => t.col));
+  const maxRow = Math.max(...tiles.map(t => t.row));
+
+  // Load all tiles, track last column/row widths for exact canvas sizing
+  const loaded = [];
+  let lastColW = 0, lastRowH = 0;
+  for (const t of tiles) {
+    const img = await loadImage(t.file);
+    loaded.push({ col: t.col, row: t.row, img });
+    if (t.col === maxCol) lastColW = img.naturalWidth;
+    if (t.row === maxRow) lastRowH = img.naturalHeight;
+  }
+
+  // Exact face dimensions — no overlap artifacts
+  const faceW = maxCol * TILE_STEP + lastColW;
+  const faceH = maxRow * TILE_STEP + lastRowH;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = faceW; canvas.height = faceH;
+  const ctx = canvas.getContext('2d');
+  for (const { col, row, img } of loaded) {
+    ctx.drawImage(img, col * TILE_STEP, row * TILE_STEP);
+  }
+  return canvas;
+}
+
+// ─── Cube → Equirectangular (async, row-batched to keep UI responsive) ────────
+//
+// Pano2VR face order:  cf_0=Front  cf_1=Right  cf_2=Back  cf_3=Left
+//                      cf_4=Up(zenith)  cf_5=Down(nadir)
+//
+// Equirectangular convention:
+//   x=0 → theta=-π (left/west),  x=W → theta=+π (right/east)
+//   y=0 → phi=+π/2 (zenith/top), y=H → phi=-π/2 (nadir/bottom)
+//
+// UV mapping per face (image coords: u=right, v=DOWN):
+//   Front (+Z, dz>0): u=(dx/dz+1)/2,  v=(-dy/dz+1)/2
+//   Back  (-Z, dz<0): u=(-dx/dz+1)/2 [note: negate both dx and dz → (-dx/|dz|+1)/2], v=(-dy/|dz|+1)/2  
+//   Right (+X, dx>0): u=(-dz/dx+1)/2, v=(-dy/dx+1)/2
+//   Left  (-X, dx<0): u=(dz/|dx|+1)/2, v=(-dy/|dx|+1)/2
+//   Up    (+Y, dy>0): u=(dx/dy+1)/2,  v=(dz/dy+1)/2   [top face: u=right, v=forward]
+//   Down  (-Y, dy<0): u=(dx/|dy|+1)/2, v=(-dz/|dy|+1)/2
+//
+// v uses -dy because image Y increases downward but world Y increases upward.
+
+function convertAsync(faceCanvases, outW, outH, onProgress) {
+  return new Promise(resolve => {
+    const faceSize = faceCanvases[0].width; // all faces are square and same size
+    const faceData = faceCanvases.map(c => c.getContext('2d').getImageData(0, 0, c.width, c.height).data);
+    const faceSizes = faceCanvases.map(c => ({ w: c.width, h: c.height }));
+    const out = new Uint8ClampedArray(outW * outH * 4);
+    const BATCH = 20;
+    let y = 0;
+
+    // Bilinear sample from a face — eliminates seam artifacts at face edges
+    function sample(fi, u, v) {
+      const fw = faceSizes[fi].w, fh = faceSizes[fi].h;
+      const x  = u * (fw - 1), sy = v * (fh - 1);
+      const x0 = Math.max(0, Math.min(fw - 2, Math.floor(x)));
+      const y0 = Math.max(0, Math.min(fh - 2, Math.floor(sy)));
+      const x1 = x0 + 1, y1 = y0 + 1;
+      const fx = x - x0, fy = sy - y0;
+      const d  = faceData[fi];
+      const i00 = (y0 * fw + x0) * 4, i10 = (y0 * fw + x1) * 4;
+      const i01 = (y1 * fw + x0) * 4, i11 = (y1 * fw + x1) * 4;
+      const w00=(1-fx)*(1-fy), w10=fx*(1-fy), w01=(1-fx)*fy, w11=fx*fy;
+      return [
+        d[i00]*w00 + d[i10]*w10 + d[i01]*w01 + d[i11]*w11,
+        d[i00+1]*w00 + d[i10+1]*w10 + d[i01+1]*w01 + d[i11+1]*w11,
+        d[i00+2]*w00 + d[i10+2]*w10 + d[i01+2]*w01 + d[i11+2]*w11,
+      ];
+    }
+
+    function processRows() {
+      const end = Math.min(y + BATCH, outH);
+      for (; y < end; y++) {
+        // phi: +π/2 at y=0 (zenith/top), -π/2 at y=H (nadir/bottom)
+        const phi    = Math.PI / 2 - (y / outH) * Math.PI;
+        const cosPhi = Math.cos(phi);
+        const sinPhi = Math.sin(phi); // = dy component
+
+        for (let x = 0; x < outW; x++) {
+          // theta: -π at x=0, +π at x=W
+          const theta    = (x / outW) * 2 * Math.PI - Math.PI;
+          const dx = cosPhi * Math.sin(theta);
+          const dy = sinPhi;
+          const dz = cosPhi * Math.cos(theta);
+
+          const ax = Math.abs(dx), ay = Math.abs(dy), az = Math.abs(dz);
+          let fi, u, v;
+
+          if (ax >= ay && ax >= az) {
+            if (dx > 0) { fi=1; u=(-dz/ax+1)/2; v=(-dy/ax+1)/2; } // Right
+            else         { fi=3; u=( dz/ax+1)/2; v=(-dy/ax+1)/2; } // Left
+          } else if (ay >= ax && ay >= az) {
+            if (dy > 0) { fi=4; u=( dx/ay+1)/2; v=( dz/ay+1)/2; } // Up
+            else         { fi=5; u=( dx/ay+1)/2; v=(-dz/ay+1)/2; } // Down
+          } else {
+            if (dz > 0) { fi=0; u=( dx/az+1)/2; v=(-dy/az+1)/2; } // Front
+            else         { fi=2; u=(-dx/az+1)/2; v=(-dy/az+1)/2; } // Back
+          }
+
+          const [r, g, b] = sample(fi, u, v);
+          const i = (y * outW + x) * 4;
+          out[i]=r; out[i+1]=g; out[i+2]=b; out[i+3]=255;
+        }
+      }
+
+      onProgress((y / outH) * 100);
+
+      if (y < outH) {
+        requestAnimationFrame(processRows);
+      } else {
+        const c = document.createElement('canvas');
+        c.width = outW; c.height = outH;
+        c.getContext('2d').putImageData(new ImageData(out, outW, outH), 0, 0);
+        resolve(c);
+      }
+    }
+
+    requestAnimationFrame(processRows);
+  });
+}
+
+// ─── Main stitch function ─────────────────────────────────────────────────────
+async function stitchNode(name) {
+  const n = nodes[name];
+  if (n.status === 'stitching') return;
+  n.status = 'stitching';
+  document.getElementById('btn-' + name).disabled = true;
+  setBadge(name, 'stitching…', 'working');
+  setProgress(name, 2, 'Loading tiles...');
+
+  try {
+    const level  = n.maxLevel;
+    const fd     = n.faces[level];
+
+    // Stitch all 6 cube faces
+    const faceCanvases = [];
+    for (let cf = 0; cf < 6; cf++) {
+      const tiles = fd[cf] || [];
+      if (!tiles.length) {
+        log(name + ': WARNING — face cf_' + cf + ' missing, using blank');
+        const blank = document.createElement('canvas');
+        blank.width = 256; blank.height = 256;
+        faceCanvases.push(blank);
+      } else {
+        faceCanvases.push(await stitchFace(tiles));
+      }
+      setProgress(name, 5 + Math.round((cf + 1) / 6 * 55), 'Stitching face ' + (cf+1) + '/6 (' + FACE_LABELS[cf] + ')...');
+    }
+
+    // Output: face width × 2 wide, face height × 1 tall (standard 2:1 equirect)
+    // Face is always square so outW = faceW*2, outH = faceH
+    const faceW = faceCanvases[0].width;
+    const faceH = faceCanvases[0].height;
+    const outW  = faceW * 2;
+    const outH  = faceH;
+
+    log(name + ': face size = ' + faceW + 'x' + faceH + ' → equirect ' + outW + 'x' + outH);
+    setProgress(name, 62, 'Converting cube to equirectangular...');
+
+    const equiCanvas = await convertAsync(faceCanvases, outW, outH, pct => {
+      setProgress(name, 62 + Math.round(pct * 0.33), 'Converting... ' + Math.round(pct) + '%');
+    });
+
+    setProgress(name, 97, 'Saving JPEG...');
+    equiCanvas.toBlob(blob => {
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement('a');
+      a.href = url;
+      a.download = name + '_panorama_' + outW + 'x' + outH + '.jpg';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      setProgress(name, 100, '✓ Saved: ' + outW + 'x' + outH + 'px');
+      setBadge(name, '✓ saved', 'done');
+      n.status = 'done';
+      log(name + ': done ✓  ' + outW + 'x' + outH + 'px equirectangular');
+    }, 'image/jpeg', 0.95);
+
+  } catch (err) {
+    setBadge(name, 'error', 'error');
+    setProgress(name, 0, 'Error: ' + err.message);
+    n.status = 'error';
+    document.getElementById('btn-' + name).disabled = false;
+    log(name + ': ERROR — ' + err.message);
+    console.error(err);
+  }
+}
+
+async function stitchAll() {
+  for (const name of Object.keys(nodes)) {
+    if (nodes[name].status !== 'stitching') await stitchNode(name);
+  }
+}
+</script>
+</body>
+</html>
